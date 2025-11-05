@@ -81,10 +81,98 @@
   }
 
   function demodFSK(raw, fs, br, f0, f1, bitsExpected, usePre, th, preSec) {
-    // 簡単なモック処理（実際の復調処理を実装する必要があります）
-    return {
-      bits: "110101010101"  // 仮のビット列を返す
-    };
+    debugLog(
+      `demodFSK: fs=${fs}, br=${br}, f0=${f0}, f1=${f1}, len=${raw.length}`
+    );
+
+    const N = raw.length;
+
+    // ── 1. RMS 正規化 ─────────────────────
+    const x = new Float32Array(N);
+    let sum = 0;
+    for (let i = 0; i < N; i++) {
+      const v = raw[i];
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / N) || 1;
+    const g = 0.5 / rms;
+    for (let i = 0; i < N; i++) {
+      let v = raw[i] * g;
+      if (v > 1) v = 1;
+      if (v < -1) v = -1;
+      x[i] = v;
+    }
+
+    // ── 2. ビット長・開始位置計算 ─────────
+    const samplesPerBit = Math.max(1, Math.round(fs / br));
+
+    let start = 0;
+    if (usePre && preSec > 0) {
+      // プリアンブルぶんスキップ（雑に時間指定）
+      start = Math.min(N, Math.floor(preSec * fs));
+    }
+
+    const maxBits = Math.floor((N - start) / samplesPerBit);
+    const totalBits = bitsExpected
+      ? Math.min(bitsExpected, maxBits)
+      : maxBits;
+
+    debugLog(
+      `demodFSK: samplesPerBit=${samplesPerBit}, start=${start}, totalBits=${totalBits}`
+    );
+
+    let bits = "";
+
+    // ── 3. 各ビット区間ごとにエネルギーを測って 0/1 判定 ─
+    const invFs = 1 / fs;
+    const TWO_PI = 2 * Math.PI;
+
+    for (let b = 0; b < totalBits; b++) {
+      const offset = start + b * samplesPerBit;
+
+      let c0 = 0, s0 = 0;
+      let c1 = 0, s1 = 0;
+
+      for (let n = 0; n < samplesPerBit; n++) {
+        const idx = offset + n;
+        if (idx >= N) break;
+        const sample = x[idx];
+        const t = idx * invFs;
+
+        const w0 = TWO_PI * f0 * t;
+        const w1 = TWO_PI * f1 * t;
+
+        const cos0 = Math.cos(w0);
+        const sin0 = Math.sin(w0);
+        const cos1 = Math.cos(w1);
+        const sin1 = Math.sin(w1);
+
+        c0 += sample * cos0;
+        s0 += sample * sin0;
+        c1 += sample * cos1;
+        s1 += sample * sin1;
+      }
+
+      const p0 = c0 * c0 + s0 * s0;
+      const p1 = c1 * c1 + s1 * s1;
+
+      const ratio = (p1 + 1e-12) / (p0 + 1e-12);
+
+      let bit;
+      // th > 1 (デフォルト 1.4 前提)
+      if (ratio > th) {
+        bit = "1";
+      } else if (ratio < 1 / th) {
+        bit = "0";
+      } else {
+        // あいまいゾーンは強い方に寄せる
+        bit = p1 >= p0 ? "1" : "0";
+      }
+
+      bits += bit;
+    }
+    debugLog(`demodFSK: decoded bits length = ${bits.length}`);
+    return { bits };
   }
 
   // グローバルにまとめてぶら下げる
