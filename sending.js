@@ -2,7 +2,6 @@
 const { debugLog, pcmToWavBlob, concatFloat32 } = SoundComm;
 
 (function () {
-  // 画面にデバッグログを出力するタイミングを最初に追加
   debugLog("sending.js initialized");
 
   const hiraEl = document.getElementById("hira");
@@ -17,93 +16,207 @@ const { debugLog, pcmToWavBlob, concatFloat32 } = SoundComm;
   const preSecEl = document.getElementById("preSec");
   const useHammingEl = document.getElementById("useHamming");
 
-  const startBtn = document.getElementById("start");
+  const genBtn = document.getElementById("gen");
   const stopBtn = document.getElementById("stop");
-  const encodeBtn = document.getElementById("encode");
+  const dlLink = document.getElementById("dl");
+  const player = document.getElementById("player");
+  const encodePlayBtn = document.getElementById("encodePlay");
 
-  // UIにログを表示するための関数
-  function log(msg) {
-    debugLog(msg);  // デバッグログにも出力
+  const SAMPLE_RATE = 44100;
+
+  let currentUrl = null;
+
+  function showError(message) {
+    if (!errEl) return;
+    errEl.textContent = message || "";
+    errEl.hidden = !message;
+    if (message) {
+      debugLog(`ERROR: ${message}`);
+    }
   }
 
-  function setStatus(msg, cls = "") {
-    statusEl.className = cls || "hint";
-    statusEl.textContent = msg;
+  function sanitizeBits(input) {
+    if (!input) return "";
+    return input.replace(/[^01]/g, "");
   }
 
-  // ビット列を生成する関数
+  function buildPreamble(bitRate, seconds) {
+    const sec = Math.max(0, Number(seconds) || 0);
+    const bits = Math.max(0, Math.round(sec * bitRate));
+    if (bits === 0) return "";
+    let out = "";
+    for (let i = 0; i < bits; i++) {
+      out += i % 2 === 0 ? "1" : "0";
+    }
+    return out;
+  }
+
+  function applyHamming(bitString) {
+    if (!bitString) return "";
+    if (bitString.length % 8 !== 0) {
+      throw new Error("Hamming(7,4) を適用するには 8bit 単位で入力してください。");
+    }
+    return HammingCodec.encode(bitString);
+  }
+
   function encodeAndSend() {
-    const bits = bitsEl.value;
-    if (!bits) {
-      errEl.textContent = "ビット列が空です";
-      debugLog("encodeAndSend: ビット列が空です");
-      return;
+    try {
+      let bits = sanitizeBits(bitsEl.value);
+      bitsEl.value = bits;
+      if (!bits) {
+        showError("ビット列が空です。0/1 のみを入力してください。");
+        return;
+      }
+
+      const bitRate = Math.max(1, Number(brEl.value) || 30);
+      const f0 = Number(f0El.value) || 1400;
+      const f1 = Number(f1El.value) || 2200;
+      const fadeMs = Math.max(0, Number(fadeEl.value) || 0);
+      const amplitude = Math.min(1, Math.max(0, Number(ampEl.value) || 0.6));
+      const preambleBits = addPreEl.checked
+        ? buildPreamble(bitRate, preSecEl.value)
+        : "";
+
+      if (useHammingEl.checked) {
+        bits = applyHamming(bits);
+      }
+
+      const payload = preambleBits + bits;
+      if (!payload) {
+        showError("有効なビット列が生成できませんでした。");
+        return;
+      }
+
+      const pcm = encodeFSK(payload, {
+        bitRate,
+        f0,
+        f1,
+        fadeMs,
+        amplitude,
+        sampleRate: SAMPLE_RATE
+      });
+
+      updatePlayer(pcm, SAMPLE_RATE);
+      showError("");
+      debugLog(
+        `encodeAndSend: generated ${payload.length} bits -> ${pcm.length} samples`
+      );
+    } catch (err) {
+      console.error(err);
+      showError(err.message || "エンコード中にエラーが発生しました。");
     }
-
-    errEl.textContent = "";
-    log(`ビット列: ${bits}`);
-
-    // ビット列を波形データに変換
-    const f0 = Number(f0El.value) || 1400;
-    const f1 = Number(f1El.value) || 2200;
-    const br = Number(brEl.value) || 30;
-    const fadeMs = Number(fadeEl.value) || 20;
-    const amp = Number(ampEl.value) || 0.5;
-    const useHamming = useHammingEl.checked;
-
-    const pcm = encodeFSK(bits, f0, f1, br, fadeMs, amp, useHamming);
-
-    // 波形データからWAVファイルを作成
-    const wavBlob = pcmToWavBlob(pcm, 44100);
-
-    // 作成したWAVファイルを再生
-    const url = URL.createObjectURL(wavBlob);
-    const audio = new Audio(url);
-    audio.play();
-
-    debugLog("encodeAndSend: WAV 再生開始");
   }
 
-  // エンコードの処理
-  function encodeFSK(bits, f0, f1, br, fadeMs, amp, useHamming) {
-    // FSK（周波数変調）波形を生成
-    let pcm = [];
-    for (let i = 0; i < bits.length; i++) {
-      const freq = bits[i] === "1" ? f1 : f0;
-      pcm = pcm.concat(generateTone(freq, br, fadeMs, amp));
+  function encodeFSK(bitString, {
+    bitRate,
+    f0,
+    f1,
+    fadeMs,
+    amplitude,
+    sampleRate
+  }) {
+    if (!bitString) {
+      return new Float32Array();
     }
-    if (useHamming) {
-      pcm = HammingCodec.encode(pcm);  // Hamming符号化を適用
+
+    const bitDuration = 1 / bitRate;
+    const samplesPerBit = Math.max(1, Math.floor(bitDuration * sampleRate));
+    const fadeSamples = Math.min(
+      Math.floor((fadeMs / 1000) * sampleRate),
+      Math.floor(samplesPerBit / 2)
+    );
+
+    let phase = 0;
+    const chunks = [];
+
+    for (let i = 0; i < bitString.length; i++) {
+      const freq = bitString[i] === "1" ? f1 : f0;
+      const { chunk, nextPhase } = generateTone({
+        frequency: freq,
+        samples: samplesPerBit,
+        sampleRate,
+        fadeSamples,
+        amplitude,
+        phase
+      });
+      chunks.push(chunk);
+      phase = nextPhase;
     }
-    return pcm;
+
+    return concatFloat32(chunks);
   }
 
-  // 周波数のトーンを生成する関数
-  function generateTone(frequency, br, fadeMs, amp) {
-    const sampleRate = 44100;
-    const duration = 1 / br;
-    const numSamples = Math.floor(duration * sampleRate);
-    const fadeSamples = Math.floor(fadeMs * sampleRate / 1000);
-    const pcm = new Float32Array(numSamples);
+  function generateTone({
+    frequency,
+    samples,
+    sampleRate,
+    fadeSamples,
+    amplitude,
+    phase
+  }) {
+    const chunk = new Float32Array(samples);
+    const phaseIncrement = (2 * Math.PI * frequency) / sampleRate;
+    let currentPhase = phase;
 
-    for (let i = 0; i < numSamples; i++) {
-      const t = i / sampleRate;
-      const fade = i < fadeSamples ? i / fadeSamples : 1;
-      pcm[i] = Math.sin(2 * Math.PI * frequency * t) * fade * amp;
+    for (let i = 0; i < samples; i++) {
+      let env = 1;
+      if (fadeSamples > 0) {
+        if (i < fadeSamples) {
+          env = i / fadeSamples;
+        } else if (i >= samples - fadeSamples) {
+          env = (samples - i) / fadeSamples;
+        }
+      }
+      chunk[i] = Math.sin(currentPhase) * amplitude * env;
+      currentPhase += phaseIncrement;
     }
 
-    return pcm;
+    currentPhase %= 2 * Math.PI;
+    return { chunk, nextPhase: currentPhase };
   }
 
-  // イベントリスナー
-  startBtn.addEventListener("click", () => {
-    encodeAndSend();
-    setStatus("データ送信中...", "ok");
-  });
+  function updatePlayer(pcm, sampleRate) {
+    if (!player) return;
 
-  stopBtn.addEventListener("click", () => {
-    setStatus("送信停止", "err");
-  });
+    const wavBlob = pcmToWavBlob(pcm, sampleRate);
+    if (currentUrl) {
+      URL.revokeObjectURL(currentUrl);
+    }
+    currentUrl = URL.createObjectURL(wavBlob);
 
-  encodeBtn.addEventListener("click", encodeAndSend);
+    player.pause();
+    player.src = currentUrl;
+    player.currentTime = 0;
+    player.load();
+    player.play().catch((err) => {
+      debugLog(`player.play failed: ${err}`);
+    });
+
+    if (dlLink) {
+      dlLink.href = currentUrl;
+      dlLink.style.display = "inline-block";
+    }
+  }
+
+  if (genBtn) {
+    genBtn.addEventListener("click", encodeAndSend);
+  }
+
+  if (encodePlayBtn) {
+    encodePlayBtn.addEventListener("click", () => {
+      const text = hiraEl.value.trim();
+      const bits = window.KanaCodec.textToBits(text);
+      bitsEl.value = bits;
+      encodeAndSend();
+    });
+  }
+
+  if (stopBtn) {
+    stopBtn.addEventListener("click", () => {
+      if (player) {
+        player.pause();
+        player.currentTime = 0;
+      }
+    });
+  }
 })();
