@@ -65,10 +65,26 @@
     return out;
   }
 
+  function createAudioContext(sampleRate = 44100) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) {
+      throw new Error("Web Audio API is not supported in this browser");
+    }
+
+    try {
+      return new AudioCtx({ sampleRate });
+    } catch (err) {
+      // 一部ブラウザでは sampleRate オプションが未対応なので、フォールバックする
+      console.warn("createAudioContext: fallback without explicit sampleRate", err);
+      return new AudioCtx();
+    }
+  }
+
   // グローバルにまとめてぶら下げる
   global.SoundComm = {
     debugLog,
     pcmToWavBlob,
     concatFloat32,
+    createAudioContext
   };
 })(window);
