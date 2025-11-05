@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>0/1 → 音（2-FSK）ジェネレーター</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>0/1 → 音（2-FSK）ジェネレーター</h1>
+    <p class="small">
+      ひらがなメッセージを <b>FSK音</b> にして送信できます。<br />
+      内部では「ひらがな → 8ビットコード → 2値FSK（0=1400Hz, 1=2200Hz, デフォ30bps）」で変換しています。
+    </p>
+
+    <!-- ひらがな入力 -->
+    <label for="hira">ひらがなメッセージ</label>
+    <textarea id="hira" placeholder="例) こんにちはせかい。"></textarea>
+    <div class="hint">対応: ひらがな / スペース / 「。」 / 「、」のみ。</div>
+    <button id="encodePlay" class="primary" style="margin-top:.5rem;">ひらがなを送信</button>
+
+    <hr style="margin:2rem 0; border:none; border-top:1px solid #eee;" />
+
+    <!-- 生ビット列入力（従来どおり） -->
+    <label for="bits">本文ビット列（0/1のみ・上級者向け）</label>
+    <input
+      id="bits"
+      type="text"
+      placeholder="例) 101100111000"
+      autocomplete="off"
+      inputmode="numeric"
+    />
+    <div class="hint">※ 最大 5000 ビットまで。空白は自動で無視します。</div>
+    <div id="err" class="err" hidden></div>
+
+    <label style="margin-top:.5rem; display:block;">
+      <input id="useHamming" type="checkbox" checked />
+      各文字に Hamming(7,4) のチェックビットを付ける（8bit → 14bit）
+    </label>
+
+    <div class="row" style="margin-top:1rem">
+      <div>
+        <label for="br">ビットレート (bps)</label>
+        <input id="br" type="number" value="30" min="10" max="1000" step="10" />
+      </div>
+      <div>
+        <label for="f0">f<sub>0</sub> (Hz, 0 の周波数)</label>
+        <input
+          id="f0"
+          type="number"
+          value="1400"
+          min="200"
+          max="4000"
+          step="10"
+        />
+      </div>
+      <div>
+        <label for="f1">f<sub>1</sub> (Hz, 1 の周波数)</label>
+        <input
+          id="f1"
+          type="number"
+          value="2200"
+          min="200"
+          max="6000"
+          step="10"
+        />
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="fade">フェード (ms)</label>
+        <input id="fade" type="number" value="3" min="0" max="20" step="1" />
+        <div class="hint">ビット境界のクリック音を低減</div>
+      </div>
+      <div>
+        <label for="amp">音量 (0.0〜1.0)</label>
+        <input id="amp" type="number" value="0.6" min="0.05" max="1.0" step="0.05" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>
+          <input id="addPre" type="checkbox" checked />
+          プレアンブルを付ける（1010…）
+        </label>
+        <div class="hint">受信ページで「プレアンブル検出」をONに。</div>
+      </div>
+      <div>
+        <label for="preSec">プレアンブル長 (秒)</label>
+        <input id="preSec" type="number" value="1.0" min="0" max="3" step="0.1" />
+        <div class="hint">
+          例: 1.0秒 @30bps ≒ 30ビット（1010…が15回分）
+        </div>
+      </div>
+    </div>
+
+    <div class="ctrls">
+      <button id="gen">ビット列から音を作る</button>
+      <button id="stop" disabled>停止</button>
+      <a id="dl" href="#" download="fsk.wav" style="display:none; text-decoration:none;">
+        <span
+          style="
+            display: inline-block;
+            padding: 0.7rem 1.1rem;
+            border-radius: 10px;
+            border: 1px solid #ddd;
+            background: #fff;
+            cursor: pointer;
+            font-weight: 600;
+            text-align: center;
+          "
+        >
+          WAVを保存
+        </span>
+      </a>
+    </div>
+
+    <audio id="player" controls></audio>
+
+    <pre id="debug-log" style="
+      max-height: 40vh;
+      padding: 8px;
+      margin: 0;
+      font-size: 10px;
+      background: rgba(0,0,0,0.8);
+      color: #0f0;
+      overflow-y: auto;
+      z-index: 9999;
+    "></pre>
+
+    <p class="hint" style="margin-top:1rem">
+      実装メモ：Web AudioでPCMバッファを合成→WAVにエンコード→再生/保存。位相連続と短いフェードでクリックを抑制。
+    </p>
+  </div>
+
+  <a href="https://yamakabu.com/sound-communication/receiving.html">
+    <button class="nav-btn">🎧 Go to Receiving Page</button>
+  </a>
+
+  <script src="./sound-utils.js"></script>
+  <script src="./kana-codec.js"></script>
+  <script src="./hamming-codec.js"></script>
+  <script src="./sending.js"></script>
+  
+</body>
+</html>

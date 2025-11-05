@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>音 → 0/1 復調（2-FSK + Coherent DFT）</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>音 → 0/1 復調（2-FSK + Coherent DFT）</h1>
+    <p class="hint">
+      送信側: 30bps / f0=1400 / f1=2200 / プレアンブル1.0秒 を想定しています。<br />
+      プレアンブルは「ビット境界だけ合わせて、既知の長さぶんだけスキップ」する方式に変更済み。
+    </p>
+
+    <div class="row">
+      <div>
+        <label for="br">ビットレート (bps)</label>
+        <input id="br" type="number" value="30" min="10" max="1000" step="10" />
+      </div>
+      <div>
+        <label for="f0">f<sub>0</sub> (Hz, 0 の周波数)</label>
+        <input id="f0" type="number" value="1400" />
+      </div>
+      <div>
+        <label for="f1">f<sub>1</sub> (Hz, 1 の周波数)</label>
+        <input id="f1" type="number" value="2200" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="secs">録音時間 (秒)</label>
+        <input
+          id="secs"
+          type="number"
+          value="6"
+          min="1"
+          max="20"
+          step="1"
+        />
+        <div class="hint">
+          送信→すぐ録音開始。本文+プレアンブル+1秒程度。
+        </div>
+      </div>
+      <div>
+        <label for="bitsExpected">期待ビット数（本文のみ）</label>
+        <input
+          id="bitsExpected"
+          type="number"
+          placeholder="例: 8(8文字×8bit)"
+        />
+        <div class="hint">分かれば入力（任意）。未入力でも動作します。</div>
+      </div>
+      <div>
+        <label for="usePreamble">プレアンブル同期を使う</label>
+        <input id="usePreamble" type="checkbox" checked />
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="preSec">プレアンブル長 (秒, 送信と同じ)</label>
+        <input id="preSec" type="number" value="1.0" min="0" max="3" step="0.1" />
+        <div class="hint">例: 1.0秒 @30bps → 約30ビット (1010…)</div>
+      </div>
+      <div>
+        <label for="th">判定しきい値 (比率)</label>
+        <input id="th" type="number" value="1.40" step="0.05" min="1.05" max="2.5" />
+        <div class="hint">大きいほどノイズに強い / 感度は低下</div>
+      </div>
+    </div>
+
+    <label style="margin-top:.5rem; display:block;">
+      <input id="useHammingRx" type="checkbox" checked />
+      Hamming(7,4) でエラー訂正してから ひらがなに復号する
+    </label>
+
+    <div class="ctrls">
+      <button id="start" class="primary">録音開始</button>
+      <button id="stop" disabled>停止</button>
+      <button id="decode" disabled>解析（復調）</button>
+    </div>
+
+    <p id="status" class="hint">準備OK。</p>
+
+    <h3>復調結果（ビット列）</h3>
+    <div id="result" class="mono"></div>
+
+    <h3>ひらがなメッセージ</h3>
+    <div id="decodedHira" class="mono"></div>
+
+    <pre id="debug-log" style="
+      max-height: 40vh;
+      padding: 8px;
+      margin: 0;
+      font-size: 10px;
+      background: rgba(0,0,0,0.8);
+      color: #0f0;
+      overflow-y: auto;
+      z-index: 9999;
+    "></pre>
+
+    <h3>録音した音の確認</h3>
+    <audio id="recPlayer" controls></audio>
+    <p class="hint small">※ マイクから録音した音声をそのまま再生します。</p>
+
+    <h3>ログ</h3>
+    <div id="log" class="log mono"></div>
+  </div>
+
+  <footer>
+    <div class="nav-btns">
+      <a href="https://yamakabu.com/sound-communication/sending.html">
+        <button>🔊 Go to Sending Page</button>
+      </a>
+    </div>
+  </footer>
+
+  <script src="./sound-utils.js"></script>
+  <script src="./kana-codec.js"></script>
+  <script src="./hamming-codec.js"></script>
+  <script src="./receiving.js"></script>
+</body>
+</html>
