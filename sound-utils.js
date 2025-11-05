@@ -80,11 +80,19 @@
     }
   }
 
+  function demodFSK(raw, fs, br, f0, f1, bitsExpected, usePre, th, preSec) {
+    // 簡単なモック処理（実際の復調処理を実装する必要があります）
+    return {
+      bits: "110101010101"  // 仮のビット列を返す
+    };
+  }
+
   // グローバルにまとめてぶら下げる
   global.SoundComm = {
     debugLog,
     pcmToWavBlob,
     concatFloat32,
-    createAudioContext
+    createAudioContext,
+    demodFSK
   };
 })(window);
