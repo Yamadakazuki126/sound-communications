@@ -90,26 +90,19 @@ const {
   function handleStreamingBits(bitStr) {
     if (!bitStr) return;
 
+    // ビットを貯める
     streamingPendingBits += bitStr;
 
-    const { text, consumedRawBits } = bitsToText(streamingPendingBits);
+    // いま持っているビット全部からテキストに変換
+    const { text } = bitsToText(streamingPendingBits);
     const nextText = text || "";
 
-    if (nextText.startsWith(streamingDecodedText)) {
-      const newPart = nextText.slice(streamingDecodedText.length);
-      if (newPart && recvTextEl) {
-        recvTextEl.textContent += newPart;
-      }
-    } else if (recvTextEl) {
+    // 単純に「今わかっている全文」を上書きするだけ
+    if (recvTextEl) {
       recvTextEl.textContent = nextText;
     }
 
     streamingDecodedText = nextText;
-
-    // 使い終わったぶんの生ビットは pending から削る（Hamming の14bit境界など用）
-    if (consumedRawBits > 0) {
-      streamingPendingBits = streamingPendingBits.slice(consumedRawBits);
-    }
   }
 
   // 録音開始処理
