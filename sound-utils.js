@@ -376,19 +376,39 @@
     );
 
     const samplesPerBit = Math.max(1, Math.round(fs / br));
+
+    // preSec は「プリンブルとして送っている 1010... の時間（秒）」という前提
     const preSecPositive = Math.max(0, Number(preSec) || 0);
     const preambleBitsCount = usePre
       ? Math.max(0, Math.round(preSecPositive * br))
       : 0;
-    const legacySkip = preambleBitsCount === 0 && preSecPositive > 0; // 時間スキップは後方互換用
+
+    // プリンブルを KMP で検出する場合、時間スキップは基本不要。
+    // ただしプリンブル長が 0 の場合だけ、従来どおり preSec を時間スキップとして使う（後方互換）。
+    const legacySkip = preambleBitsCount === 0 && preSecPositive > 0;
     const start = legacySkip
       ? Math.min(raw.length, Math.floor(preSecPositive * fs))
       : 0;
-    const maxBits = Math.floor((raw.length - start) / samplesPerBit);
-    const totalBits = bitsExpected ? Math.min(bitsExpected, maxBits) : maxBits;
+
+    // 生PCM全体から切り出せる「ビット総数」（プリンブル＋データ）
+    const rawBitsMax = Math.floor((raw.length - start) / samplesPerBit);
+
+    // プリンブルぶんを引いた「データ用ビット数の最大値」
+    let payloadBitsMax = rawBitsMax;
+    if (preambleBitsCount > 0) {
+      payloadBitsMax = Math.max(0, rawBitsMax - preambleBitsCount);
+    }
+
+    // このフレームで本当に欲しいビット数
+    const totalBits =
+      bitsExpected != null
+        ? Math.min(bitsExpected, payloadBitsMax)
+        : payloadBitsMax;
 
     debugLog(
-      `demodFSK: samplesPerBit=${samplesPerBit}, start=${start}, totalBits=${totalBits}`
+      `demodFSK: samplesPerBit=${samplesPerBit}, start=${start}, ` +
+      `rawBitsMax=${rawBitsMax}, preambleBits=${preambleBitsCount}, ` +
+      `payloadBitsMax=${payloadBitsMax}, totalBits=${totalBits}`
     );
 
     const state = new FSKDemodState({
@@ -407,6 +427,7 @@
       state.skipSamplesRemaining = start;
     }
 
+    // 以下は今のままでOK
     const chunkSize = Math.max(samplesPerBit * 16, 1024);
     const frames = [];
 
