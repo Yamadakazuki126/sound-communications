@@ -59,8 +59,15 @@ const {
     return out;
   }
 
-  // 受信したビット列からヘッダー付きフレームを解析する
-  function decodeFrameBits(rawBitString, { context = "decode", suppressPartialLog = false } = {}) {
+    // 受信したビット列からヘッダー付きフレームを解析する
+  function decodeFrameBits(
+    rawBitString,
+    {
+      context = "decode",
+      suppressPartialLog = false,
+      allowPartialPayload = false, // ★ 追加: 部分ペイロードを許可するか
+    } = {}
+  ) {
     const rawBits = rawBitString || "";
     const useHamming = useHammingRxEl.checked;
 
@@ -68,7 +75,9 @@ const {
     const usableLength = Math.floor(rawBits.length / blockSize) * blockSize;
     if (usableLength === 0) {
       if (!suppressPartialLog) {
-        debugLog(`[${context}] ヘッダー解析に必要なビット数が不足しています (raw=${rawBits.length})`);
+        debugLog(
+          `[${context}] ヘッダー解析に必要なビット数が不足しています (raw=${rawBits.length})`
+        );
       }
       return { success: false, reason: "insufficient-raw" };
     }
@@ -80,11 +89,16 @@ const {
 
     if (!messageBits || messageBits.length < 8) {
       if (!suppressPartialLog) {
-        debugLog(`[${context}] ヘッダー8bitを取得できませんでした (messageBits=${messageBits ? messageBits.length : 0})`);
+        debugLog(
+          `[${context}] ヘッダー8bitを取得できませんでした (messageBits=${
+            messageBits ? messageBits.length : 0
+          })`
+        );
       }
       return { success: false, reason: "no-header" };
     }
 
+    // --- ヘッダー(len) 読み取り ---
     const lenBits = messageBits.slice(0, 8);
     let len = 0;
     for (let i = 0; i < 8; i++) {
@@ -98,7 +112,8 @@ const {
 
     const needBits = len * 8;
     const availablePayloadBits = messageBits.length - 8;
-    if (availablePayloadBits < needBits) {
+
+    if (availablePayloadBits <= 0) {
       if (!suppressPartialLog) {
         debugLog(
           `[${context}] not enough bits for payload: need=${needBits}, actual=${availablePayloadBits}`
@@ -107,12 +122,50 @@ const {
       return { success: false, reason: "insufficient-payload" };
     }
 
-    const payloadBits = messageBits.slice(8, 8 + needBits);
+    // --- ペイロード部分（全体 or 部分） ---
+    let payloadBitCount;
+    let partial = false;
+
+    if (!allowPartialPayload) {
+      // 従来通り：全部そろってないと失敗扱い
+      if (availablePayloadBits < needBits) {
+        if (!suppressPartialLog) {
+          debugLog(
+            `[${context}] not enough bits for payload: need=${needBits}, actual=${availablePayloadBits}`
+          );
+        }
+        return { success: false, reason: "insufficient-payload" };
+      }
+      payloadBitCount = needBits;
+    } else {
+      // ストリーミング時：ある分だけ使う（ただし1文字分以上）
+      payloadBitCount = Math.min(availablePayloadBits, needBits);
+      // 8bit単位（1文字単位）に切り下げ
+      payloadBitCount = Math.floor(payloadBitCount / 8) * 8;
+
+      if (payloadBitCount === 0) {
+        // まだ1文字も確定できない
+        return { success: false, reason: "insufficient-payload" };
+      }
+
+      if (payloadBitCount < needBits) {
+        partial = true;
+        if (!suppressPartialLog) {
+          debugLog(
+            `[${context}] partial payload: have=${availablePayloadBits}, use=${payloadBitCount}, need=${needBits}`
+          );
+        }
+      }
+    }
+
+    const payloadBits = messageBits.slice(8, 8 + payloadBitCount);
     const text = window.KanaCodec.bitsToHiragana(payloadBits) || "";
-    const usedMessageBits = messageBits.slice(0, 8 + needBits);
+    const usedMessageBits = messageBits.slice(0, 8 + payloadBitCount);
 
     debugLog(
-      `[${context}] header len=${len}, payloadBits=${payloadBits.length}, text="${text}"`
+      `[${context}] header len=${len}, payloadBits=${payloadBits.length}, text="${text}"${
+        partial ? " (partial)" : ""
+      }`
     );
 
     return {
@@ -121,21 +174,23 @@ const {
       payloadBits,
       text,
       messageBits: usedMessageBits,
-      consumedRawBits: decodableRawBits.length
+      consumedRawBits: decodableRawBits.length,
+      partial,
     };
   }
 
-  function handleStreamingBits(bitStr) {
+    function handleStreamingBits(bitStr) {
     if (!bitStr) return;
 
     // ビットを貯める
     streamingPendingBits += bitStr;
 
     // いま持っているビット全部からテキストに変換
-    // ストリーミング時もヘッダー解析を試みる（不足時は静かに待機）
+    // ★ ストリーミング時は「部分ペイロードOK」でデコード
     const result = decodeFrameBits(streamingPendingBits, {
       context: "streaming",
-      suppressPartialLog: true
+      suppressPartialLog: true,
+      allowPartialPayload: true,
     });
 
     if (result.success) {
@@ -143,7 +198,6 @@ const {
       if (recvTextEl) {
         recvTextEl.textContent = nextText;
       }
-
       streamingDecodedText = nextText;
     }
   }
