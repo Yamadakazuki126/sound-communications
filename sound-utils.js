@@ -214,6 +214,7 @@
   }
 
   // 交互ビットのプリンブルを KMP で追跡し、開始合図を検出する。
+  // 交互ビットのプリンブルを KMP で追跡し、開始合図を検出する。
   function advancePreambleMatch(state, bit) {
     if (!state || state.preambleLength === 0) {
       state.preambleDetected = true;
@@ -233,6 +234,12 @@
         state.inFrame = true;
         state.bitBuffer = [];
         state.preambleMatchIndex = state.preambleTable[idx - 1] || 0;
+
+        // ★ プリンブル検出ログ
+        debugLog(
+          `advancePreambleMatch: preamble detected (length=${state.preambleLength})`
+        );
+
         return true; // プリンブルを検出。現在のビットはプリンブルに含まれる。
       }
     }
@@ -240,8 +247,10 @@
     state.preambleMatchIndex = idx;
     return false;
   }
-
+  
   // 小さなPCMチャンクを受け取り、状態を更新しながら復調する。
+  // フレームが完成すると number[] で返し、未完了なら null を返す。
+    // 小さなPCMチャンクを受け取り、状態を更新しながら復調する。
   // フレームが完成すると number[] で返し、未完了なら null を返す。
   function demodFSKChunk(pcmChunk, state) {
     if (!state) {
@@ -318,6 +327,19 @@
         bit = 0;
       } else {
         bit = p1 >= p0 ? 1 : 0;
+      }
+
+      // ★ デバッグ: プリンブル検出前の先頭ビットを覗く
+      if (!state.inFrame && state.preambleLength > 0) {
+        if (!state._debugFirstBits) state._debugFirstBits = "";
+        if (state._debugFirstBits.length < 80) {
+          state._debugFirstBits += bit ? "1" : "0";
+          if (state._debugFirstBits.length === 80) {
+            debugLog(
+              `demodFSKChunk: first bits(before preamble detect)=${state._debugFirstBits}`
+            );
+          }
+        }
       }
 
       idx += samplesPerBit;
