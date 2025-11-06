@@ -59,30 +59,68 @@ const {
     return out;
   }
 
-  function bitsToText(bitString) {
-    const rawBits = bitString || "";
+  // 受信したビット列からヘッダー付きフレームを解析する
+  function decodeFrameBits(rawBitString, { context = "decode", suppressPartialLog = false } = {}) {
+    const rawBits = rawBitString || "";
     const useHamming = useHammingRxEl.checked;
 
-    let dataBits = rawBits;
-    let decodableRawBits = rawBits;
-
-    if (useHamming) {
-      const usableLength = Math.floor(rawBits.length / 14) * 14;
-      decodableRawBits = rawBits.slice(0, usableLength);
-      dataBits = HammingCodec.decode(decodableRawBits);
-    } else {
-      const usableLength = Math.floor(rawBits.length / 8) * 8;
-      decodableRawBits = rawBits.slice(0, usableLength);
-      dataBits = rawBits;
+    const blockSize = useHamming ? 14 : 8;
+    const usableLength = Math.floor(rawBits.length / blockSize) * blockSize;
+    if (usableLength === 0) {
+      if (!suppressPartialLog) {
+        debugLog(`[${context}] ヘッダー解析に必要なビット数が不足しています (raw=${rawBits.length})`);
+      }
+      return { success: false, reason: "insufficient-raw" };
     }
 
-    const textSourceBits = useHamming ? dataBits : decodableRawBits;
-    const text = window.KanaCodec.bitsToHiragana(textSourceBits || "") || "";
+    const decodableRawBits = rawBits.slice(0, usableLength);
+    const messageBits = useHamming
+      ? HammingCodec.decode(decodableRawBits)
+      : decodableRawBits;
+
+    if (!messageBits || messageBits.length < 8) {
+      if (!suppressPartialLog) {
+        debugLog(`[${context}] ヘッダー8bitを取得できませんでした (messageBits=${messageBits ? messageBits.length : 0})`);
+      }
+      return { success: false, reason: "no-header" };
+    }
+
+    const lenBits = messageBits.slice(0, 8);
+    let len = 0;
+    for (let i = 0; i < 8; i++) {
+      len = (len << 1) | (lenBits.charCodeAt(i) & 1);
+    }
+
+    if (len > 64) {
+      debugLog(`[${context}] header len=${len} (max 64). discard frame`);
+      return { success: false, reason: "len-too-large" };
+    }
+
+    const needBits = len * 8;
+    const availablePayloadBits = messageBits.length - 8;
+    if (availablePayloadBits < needBits) {
+      if (!suppressPartialLog) {
+        debugLog(
+          `[${context}] not enough bits for payload: need=${needBits}, actual=${availablePayloadBits}`
+        );
+      }
+      return { success: false, reason: "insufficient-payload" };
+    }
+
+    const payloadBits = messageBits.slice(8, 8 + needBits);
+    const text = window.KanaCodec.bitsToHiragana(payloadBits) || "";
+    const usedMessageBits = messageBits.slice(0, 8 + needBits);
+
+    debugLog(
+      `[${context}] header len=${len}, payloadBits=${payloadBits.length}, text="${text}"`
+    );
 
     return {
-      rawBits,
-      dataBits,
+      success: true,
+      len,
+      payloadBits,
       text,
+      messageBits: usedMessageBits,
       consumedRawBits: decodableRawBits.length
     };
   }
@@ -94,15 +132,20 @@ const {
     streamingPendingBits += bitStr;
 
     // いま持っているビット全部からテキストに変換
-    const { text } = bitsToText(streamingPendingBits);
-    const nextText = text || "";
+    // ストリーミング時もヘッダー解析を試みる（不足時は静かに待機）
+    const result = decodeFrameBits(streamingPendingBits, {
+      context: "streaming",
+      suppressPartialLog: true
+    });
 
-    // 単純に「今わかっている全文」を上書きするだけ
-    if (recvTextEl) {
-      recvTextEl.textContent = nextText;
+    if (result.success) {
+      const nextText = result.text || "";
+      if (recvTextEl) {
+        recvTextEl.textContent = nextText;
+      }
+
+      streamingDecodedText = nextText;
     }
-
-    streamingDecodedText = nextText;
   }
 
   // 録音開始処理
@@ -313,19 +356,26 @@ const {
     const t1 = performance.now();
 
     const rawBits = out.bits || "";
-    const { dataBits, text } = bitsToText(rawBits);
+    const frame = decodeFrameBits(rawBits, { context: "decodeNow" });
 
-    resultEl.textContent = dataBits || "(空)";
+    if (!frame.success) {
+      resultEl.textContent = rawBits || "(空)";
+      hiraEl.textContent = "(デコード結果なし)";
+      setStatus("フレームの解析に失敗しました。ログを確認してください。", "err");
+      return;
+    }
 
-    const hiraText = text || "";
+    resultEl.textContent = frame.messageBits || "(空)";
+
+    const hiraText = frame.text || "";
     hiraEl.textContent = hiraText || "(デコード結果なし)";
 
     setStatus(
-      `解析完了（${(t1 - t0).toFixed(1)} ms, 生=${rawBits.length}bit / データ=${dataBits.length}bit）`,
+      `解析完了（${(t1 - t0).toFixed(1)} ms, 生=${rawBits.length}bit / メッセージ=${frame.messageBits.length}bit / ペイロード=${frame.payloadBits.length}bit）`,
       "ok"
     );
     debugLog(
-      `decodeNow: 完了 rawBits=${rawBits.length}, dataBits=${dataBits.length}, elapsed=${(
+      `decodeNow: 完了 rawBits=${rawBits.length}, messageBits=${frame.messageBits.length}, elapsed=${(
         t1 - t0
       ).toFixed(1)}ms`
     );

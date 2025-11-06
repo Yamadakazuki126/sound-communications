@@ -59,9 +59,13 @@ const { debugLog, pcmToWavBlob, concatFloat32 } = SoundComm;
     return HammingCodec.encode(bitString);
   }
 
-  function encodeAndSend() {
+  function encodeAndSend(bitStringOverride, options = {}) {
     try {
-      let bits = sanitizeBits(bitsEl.value);
+      const { logLabel, lenForLog, payloadBitLengthForLog } = options;
+
+      let bits = sanitizeBits(
+        bitStringOverride != null ? bitStringOverride : bitsEl.value
+      );
       bitsEl.value = bits;
       if (!bits) {
         showError("ビット列が空です。0/1 のみを入力してください。");
@@ -73,21 +77,21 @@ const { debugLog, pcmToWavBlob, concatFloat32 } = SoundComm;
       const f1 = Number(f1El.value) || 2200;
       const fadeMs = Math.max(0, Number(fadeEl.value) || 0);
       const amplitude = Math.min(1, Math.max(0, Number(ampEl.value) || 0.6));
-      const preambleBits = addPreEl.checked
-        ? buildPreamble(bitRate, preSecEl.value)
-        : "";
-
       if (useHammingEl.checked) {
         bits = applyHamming(bits);
       }
 
-      const payload = preambleBits + bits;
-      if (!payload) {
+      const preambleBits = addPreEl.checked
+        ? buildPreamble(bitRate, preSecEl.value)
+        : "";
+
+      const frameBits = preambleBits + bits;
+      if (!frameBits) {
         showError("有効なビット列が生成できませんでした。");
         return;
       }
 
-      const pcm = encodeFSK(payload, {
+      const pcm = encodeFSK(frameBits, {
         bitRate,
         f0,
         f1,
@@ -98,13 +102,60 @@ const { debugLog, pcmToWavBlob, concatFloat32 } = SoundComm;
 
       updatePlayer(pcm, SAMPLE_RATE);
       showError("");
-      debugLog(
-        `encodeAndSend: generated ${payload.length} bits -> ${pcm.length} samples`
-      );
+      if (logLabel) {
+        debugLog(
+          `[${logLabel}] len=${lenForLog}, payloadBits=${payloadBitLengthForLog}, frameBits=${frameBits.length}, samples=${pcm.length}`
+        );
+      } else {
+        debugLog(
+          `encodeAndSend: generated ${frameBits.length} bits -> ${pcm.length} samples`
+        );
+      }
     } catch (err) {
       console.error(err);
       showError(err.message || "エンコード中にエラーが発生しました。");
     }
+  }
+
+  // ヘッダー用の文字数を MSB first の8bit配列に変換する
+  function buildLenBits(len) {
+    const bits = [];
+    for (let i = 7; i >= 0; i--) {
+      bits.push(((len >> i) & 1).toString());
+    }
+    return bits.join("");
+  }
+
+  // 入力テキストから [Len(8bit) + Payload(8bit*len)] のビット列を生成する
+  function createMessageBitsFromText(text) {
+    const trimmed = (text || "").trim();
+    const nChars = trimmed.length;
+    const len = Math.min(nChars, 64);
+    const limitedText = trimmed.slice(0, len);
+
+    const payloadBits = len > 0 ? window.KanaCodec.textToBits(limitedText) : "";
+    const lenBits = buildLenBits(len);
+    const messageBits = lenBits + payloadBits;
+
+    return { len, payloadBits, messageBits };
+  }
+
+  // テキスト入力をフレーム化して送信するハンドラ
+  function encodeTextAndSend() {
+    const text = hiraEl.value;
+    const { len, payloadBits, messageBits } = createMessageBitsFromText(text);
+
+    if (len === 0) {
+      showError("送信する文字がありません。");
+      return;
+    }
+
+    bitsEl.value = messageBits;
+    encodeAndSend(messageBits, {
+      logLabel: "encodeText",
+      lenForLog: len,
+      payloadBitLengthForLog: payloadBits.length
+    });
   }
 
   function encodeFSK(bitString, {
@@ -203,12 +254,7 @@ const { debugLog, pcmToWavBlob, concatFloat32 } = SoundComm;
   }
 
   if (encodePlayBtn) {
-    encodePlayBtn.addEventListener("click", () => {
-      const text = hiraEl.value.trim();
-      const bits = window.KanaCodec.textToBits(text);
-      bitsEl.value = bits;
-      encodeAndSend();
-    });
+    encodePlayBtn.addEventListener("click", encodeTextAndSend);
   }
 
   if (stopBtn) {
