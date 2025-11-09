@@ -1,7 +1,7 @@
 // sending.js
-const { debugLog, pcmToWavBlob, concatFloat32 } = SoundComm;
-
 (function () {
+  const { debugLog, pcmToWavBlob, concatFloat32 } = SoundComm;
+  
   debugLog("sending.js initialized");
 
   const hiraEl = document.getElementById("hira");
